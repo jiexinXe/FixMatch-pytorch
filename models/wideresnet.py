@@ -69,11 +69,11 @@ class NetworkBlock(nn.Module):
         return self.layer(x)
 
 
-class WideResNet(nn.Module):
+class WideResNetCon(nn.Module):
     def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0):
-        super(WideResNet, self).__init__()
-        channels = [16, 16*widen_factor, 32*widen_factor, 64*widen_factor]
-        assert((depth - 4) % 6 == 0)
+        super(WideResNetCon, self).__init__()
+        channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
+        assert ((depth - 4) % 6 == 0)
         n = (depth - 4) / 6
         block = BasicBlock
         # 1st conv before any network block
@@ -93,6 +93,16 @@ class WideResNet(nn.Module):
         self.relu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
         self.fc = nn.Linear(channels[3], num_classes)
         self.channels = channels[3]
+
+        feat_dim = 2 * channels[3]
+        self.fc1 = nn.Linear(channels[3], num_classes)
+        self.head = nn.Sequential(nn.Linear(channels[3], channels[3]), nn.BatchNorm1d(channels[3]),
+                                  nn.ReLU(inplace=True),
+                                  nn.Linear(channels[3], feat_dim))
+
+        self.head_fc = nn.Sequential(nn.Linear(channels[3], channels[3]), nn.BatchNorm1d(channels[3]),
+                                     nn.ReLU(inplace=True),
+                                     nn.Linear(channels[3], feat_dim))
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -114,12 +124,89 @@ class WideResNet(nn.Module):
         out = self.relu(self.bn1(out))
         out = F.adaptive_avg_pool2d(out, 1)
         out = out.view(-1, self.channels)
+        if self.training:
+            feat_mlp = F.normalize(self.head(out), dim=1)
+            centers_logits = F.normalize(self.head_fc(self.fc1.weight), dim=1)
+            return out, feat_mlp, centers_logits
+        else:
+            return out
+
+    def classify(self, out):
         return self.fc(out)
 
+    def classify1(self, out):
+        return self.fc1(out)
+
+    def __init__(self, num_classes, depth=28, widen_factor=2, drop_rate=0.0):
+        super(WideResNetCon, self).__init__()
+        channels = [16, 16 * widen_factor, 32 * widen_factor, 64 * widen_factor]
+        assert ((depth - 4) % 6 == 0)
+        n = (depth - 4) / 6
+        block = BasicBlock
+        # 1st conv before any network block
+        self.conv1 = nn.Conv2d(3, channels[0], kernel_size=3, stride=1,
+                               padding=1, bias=False)
+        # 1st block
+        self.block1 = NetworkBlock(
+            n, channels[0], channels[1], block, 1, drop_rate, activate_before_residual=True)
+        # 2nd block
+        self.block2 = NetworkBlock(
+            n, channels[1], channels[2], block, 2, drop_rate)
+        # 3rd block
+        self.block3 = NetworkBlock(
+            n, channels[2], channels[3], block, 2, drop_rate)
+        # global average pooling and classifier
+        self.bn1 = nn.BatchNorm2d(channels[3], momentum=0.001)
+        self.relu = nn.LeakyReLU(negative_slope=0.1, inplace=True)
+        self.fc = nn.Linear(channels[3], num_classes)
+        self.channels = channels[3]
+
+        feat_dim = 2 * channels[3]
+        self.fc1 = nn.Linear(channels[3], num_classes)
+        self.head = nn.Sequential(nn.Linear(channels[3], channels[3]), nn.BatchNorm1d(channels[3]),
+                                  nn.ReLU(inplace=True),
+                                  nn.Linear(channels[3], feat_dim))
+
+        self.head_fc = nn.Sequential(nn.Linear(channels[3], channels[3]), nn.BatchNorm1d(channels[3]),
+                                     nn.ReLU(inplace=True),
+                                     nn.Linear(channels[3], feat_dim))
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight,
+                                        mode='fan_out',
+                                        nonlinearity='leaky_relu')
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0.0)
+            elif isinstance(m, nn.Linear):
+                nn.init.xavier_normal_(m.weight)
+                nn.init.constant_(m.bias, 0.0)
+
+    def forward(self, x):
+        out = self.conv1(x)
+        out = self.block1(out)
+        out = self.block2(out)
+        out = self.block3(out)
+        out = self.relu(self.bn1(out))
+        out = F.adaptive_avg_pool2d(out, 1)
+        out = out.view(-1, self.channels)
+        if self.training:
+            feat_mlp = F.normalize(self.head(out), dim=1)
+            centers_logits = F.normalize(self.head_fc(self.fc1.weight), dim=1)
+            return out, feat_mlp, centers_logits
+        else:
+            return out
+
+    def classify(self, out):
+        return self.fc(out)
+
+    def classify1(self, out):
+        return self.fc1(out)
 
 def build_wideresnet(depth, widen_factor, dropout, num_classes):
     logger.info(f"Model: WideResNet {depth}x{widen_factor}")
-    return WideResNet(depth=depth,
-                      widen_factor=widen_factor,
-                      drop_rate=dropout,
-                      num_classes=num_classes)
+    return WideResNetCon(depth=depth,
+                         widen_factor=widen_factor,
+                         drop_rate=dropout,
+                         num_classes=num_classes)
