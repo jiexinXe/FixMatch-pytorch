@@ -274,10 +274,7 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer'])
         scheduler.load_state_dict(checkpoint['scheduler'])
 
-    if args.amp:
-        from apex import amp
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level=args.opt_level)
+
 
     if args.local_rank != -1:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -299,8 +296,7 @@ def main():
 
 def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
           model, optimizer, ema_model, scheduler):
-    if args.amp:
-        from apex import amp
+
     global best_acc
     test_accs = []
     end = time.time()
@@ -327,30 +323,33 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
                          disable=args.local_rank not in [-1, 0])
         for batch_idx in range(args.eval_step):
             try:
-                inputs_x, targets_x = labeled_iter.next()
+                # inputs_x, targets_x = labeled_iter.next()
                 # error occurs ↓
-                # inputs_x, targets_x = next(labeled_iter)
+                inputs_x, targets_x = next(labeled_iter)
             except:
                 if args.world_size > 1:
                     labeled_epoch += 1
                     labeled_trainloader.sampler.set_epoch(labeled_epoch)
                 labeled_iter = iter(labeled_trainloader)
-                inputs_x, targets_x = labeled_iter.next()
+                # inputs_x, targets_x = labeled_iter.next()
                 # error occurs ↓
-                # inputs_x, targets_x = next(labeled_iter)
+                inputs_x, targets_x = next(labeled_iter)
 
             try:
-                (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
+                # (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
                 # error occurs ↓
-                # (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
+                (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
             except:
                 if args.world_size > 1:
                     unlabeled_epoch += 1
                     unlabeled_trainloader.sampler.set_epoch(unlabeled_epoch)
                 unlabeled_iter = iter(unlabeled_trainloader)
-                (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
+                # (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
                 # error occurs ↓
-                # (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
+                (inputs_u_w, inputs_u_s), _ = next(unlabeled_iter)
+
+            # targets_x = targets_x.to(args.device).long()
+            # targets_x = targets_x.to(torch.int64)
 
             data_time.update(time.time() - end)
             batch_size = inputs_x.shape[0]
@@ -374,11 +373,7 @@ def train(args, labeled_trainloader, unlabeled_trainloader, test_loader,
 
             loss = Lx + args.lambda_u * Lu
 
-            if args.amp:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+            loss.backward()
 
             losses.update(loss.item())
             losses_x.update(Lx.item())
